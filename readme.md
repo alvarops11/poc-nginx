@@ -451,13 +451,77 @@ Al acceder y recargar la página desde el navegador, se observaron las peticione
 
 ## 9. Incidencia simulada
 
-**Pendiente de realizar en la siguiente sesión.**
+### INC-2026-081: error 403 o 404 al publicar cambios
 
-Se realizará el diagnóstico de una incidencia simulada que produzca una respuesta HTTP 403 o 404. Para ello, se revisarán los logs de Nginx, los archivos y permisos dentro del contenedor y la configuración del servidor.
+**Reporte simulado:** después de modificar los estilos y añadir una imagen corporativa, el cliente informa que algunos recursos no cargan y que el servidor devuelve `403 Forbidden` o `404 Not Found`.
 
-Los resultados y la solución aplicada se documentarán una vez realizada la actividad.
+El procedimiento siguiente documenta cómo diagnosticar el problema. Es un escenario simulado: los comandos son pasos de comprobación y no se afirma que se hayan ejecutado durante esta práctica.
 
-## 10. Conclusiones
+#### 9.1. Consultar los logs en tiempo real
+
+Desde PowerShell, en la carpeta del proyecto:
+
+```powershell
+docker compose logs --tail=100 -f web
+```
+
+Mientras se mantiene abierta la consulta, recargar la página y observar las peticiones fallidas. `Ctrl+C` detiene el seguimiento de los logs, pero no el contenedor.
+
+- Un mensaje `Permission denied` (normalmente con código de sistema `13`) orienta a revisar los permisos de lectura y recorrido de las carpetas.
+- Un mensaje `No such file or directory` (normalmente con código de sistema `2`) indica que la ruta solicitada no existe dentro de la raíz publicada.
+- Un `403` al solicitar una carpeta también puede significar que no hay un archivo índice en ella y que el listado de directorios está deshabilitado.
+
+#### 9.2. Validar archivos y permisos dentro del contenedor
+
+Abrir una consola interactiva:
+
+```powershell
+docker compose exec web sh
+```
+
+Dentro del contenedor, revisar la raíz publicada y los recursos esperados:
+
+```sh
+ls -la /usr/share/nginx/html
+ls -la /usr/share/nginx/html/css
+ls -la /usr/share/nginx/html/img
+ls -l /usr/share/nginx/html/css/style.css
+test -r /usr/share/nginx/html/css/style.css && echo "CSS legible" || echo "CSS ausente o no legible"
+find /usr/share/nginx/html -type f
+```
+
+Comprobar que los directorios que contienen los recursos tienen permiso de recorrido y que Nginx puede leer los archivos. El volumen está montado como solo lectura (`:ro`), por lo que los cambios deben realizarse en los archivos del host, no desde la consola del contenedor.
+
+Para contrastar el resultado con la configuración efectiva:
+
+```sh
+nginx -T
+```
+
+La configuración de este proyecto establece `/usr/share/nginx/html` como raíz y usa `try_files` para devolver `404` cuando el recurso solicitado no existe.
+
+#### 9.3. Interpretación y resolución esperada
+
+En `docker-compose.yml` solo se monta `./html` en `/usr/share/nginx/html`. Por tanto, los archivos situados en la carpeta del proyecto `img/` no se publican como recursos de la web; actualmente esa carpeta contiene imágenes de documentación. Si la imagen corporativa se guarda allí y el HTML solicita `/img/logo.png`, Nginx no la encontrará y devolverá `404`.
+
+Para servirla, colocar el archivo en `html/img/` y referenciarlo desde HTML con una ruta como `/img/logo-corporativo.png`. Verificar asimismo que la hoja de estilos esté en `html/css/style.css` y que su referencia en HTML apunte a `/css/style.css`. Después de actualizar los archivos del host, comprobar las respuestas:
+
+```powershell
+curl.exe -I http://localhost:8080/css/style.css
+curl.exe -I http://localhost:8080/img/logo-corporativo.png
+```
+
+Ambas peticiones deben responder `200 OK`. Si los logs indican `Permission denied`, comprobar desde el contenedor los permisos de lectura del archivo y de recorrido de sus directorios, además de la accesibilidad del montaje. No se recomienda aplicar permisos abiertos como `777`; tampoco es posible corregir los archivos del volumen de solo lectura desde el contenedor.
+
+## 10. Buenas prácticas profesionales
+
+- **Imágenes ligeras y versión controlada:** usar `nginx:1.27-alpine` en lugar de `nginx:latest` evita actualizaciones inesperadas del tag y emplea una imagen Alpine compacta. Alpine reduce componentes innecesarios, aunque no sustituye la actualización periódica de la imagen ni la revisión de vulnerabilidades.
+- **Montajes de solo lectura (`:ro`):** servir los archivos estáticos y la configuración con montajes de solo lectura reduce el impacto de una posible vulneración al impedir que Nginx modifique esos archivos desde el contenedor. Los cambios se realizan en el host y se reflejan en el montaje.
+- **Hardening HTTP:** mantener `server_tokens off` evita exponer la versión de Nginx en páginas de error y cabeceras generadas por el servidor; no elimina por sí solo las vulnerabilidades ni reemplaza la actualización de la imagen.
+- **Logs desacoplados:** usar la salida estándar del contenedor y consultarla con `docker compose logs` facilita la centralización y observabilidad. La imagen oficial de Nginx dirige por defecto los logs de acceso a `/dev/stdout` y los de error a `/dev/stderr`, sin necesidad de guardarlos en archivos internos del contenedor.
+- **Publicación correcta de recursos:** colocar CSS, imágenes y demás assets que la web deba servir dentro de `html/`, que es el directorio montado como raíz web. Mantenerlos fuera de esa carpeta —por ejemplo, en `img/` en la raíz del proyecto— no los hace accesibles desde el navegador.
+
+## 11. Conclusiones
 
 La práctica permite desplegar una web estática mediante Nginx y Docker, comprender el funcionamiento de los puertos publicados y los volúmenes, y aplicar medidas básicas de hardening a un servidor web.
 
